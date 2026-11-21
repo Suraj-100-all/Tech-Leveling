@@ -102,9 +102,17 @@ export function LobbyView({
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-6 border-t border-[#26262E] pt-3 text-xs text-[#A1A1AA] lg:border-t-0 lg:pt-0">
+            <div className="flex flex-wrap items-center gap-5 border-t border-[#26262E] pt-3 text-xs text-[#A1A1AA] lg:border-t-0 lg:pt-0">
               <div>
-                <div className="font-mono text-base font-semibold tabular-nums text-[#FACC15]">
+                <div className="flex items-center gap-1.5 font-mono text-base font-semibold text-[#FACC15]">
+                  <GeminiSparkIcon className="h-4 w-4" />
+                  <span>Gemini AI Live</span>
+                </div>
+                <div className="mt-0.5 text-[#A1A1AA]">Big-O Judge · Mentor · Voice</div>
+              </div>
+              <div className="h-8 w-px bg-[#2A2A32]" aria-hidden="true" />
+              <div>
+                <div className="font-mono text-base font-semibold tabular-nums text-[#F4F4F5]">
                   50 Levels / Lang
                 </div>
                 <div className="mt-0.5 text-[#A1A1AA]">5 Parts × 10 Levels</div>
@@ -123,16 +131,24 @@ export function LobbyView({
 
       {/* Invite Link Detected Banner (Post-Deployment 2nd/3rd Player Flow) */}
       {inviteRoomCode && (
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#4ADE80]/40 bg-[#132018] px-4 py-3 text-xs">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#4ADE80]/50 bg-[#132018] px-4 py-3 text-xs">
           <div className="flex items-center gap-2.5 text-[#E4E4E7]">
             <Link2 className="h-4 w-4 shrink-0 text-[#4ADE80]" aria-hidden="true" />
             <span>
               Multiplayer invite detected for Room{' '}
               <span className="font-mono font-semibold text-[#FACC15]">{inviteRoomCode}</span>.
-              Confirm your handle below and click{' '}
-              <span className="font-semibold text-[#F4F4F5]">Find Match</span> to join live.
+              Your language &amp; level will auto-sync with the host when you join.
             </span>
           </div>
+          <button
+            type="button"
+            disabled={!wsConnected}
+            onClick={onFindMatch}
+            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-[#4ADE80] px-4 py-2 text-xs font-semibold text-[#0A0A0C] transition-colors hover:bg-[#86EFAC] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4ADE80] disabled:opacity-50"
+          >
+            <span>Join Room {inviteRoomCode} Now</span>
+            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
         </div>
       )}
 

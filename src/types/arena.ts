@@ -55,6 +55,7 @@ export interface ProblemStatement {
   constraints: string[];
   examples: ProblemExample[];
   inputOutputNote: string;
+  isAiGenerated?: boolean;
 }
 
 export interface QuickNotesData {
@@ -75,6 +76,20 @@ export interface PlayerPresence {
   isTyping: boolean;
   submitted: boolean;
   isSelf?: boolean;
+}
+
+export interface WaitingRoomPlayer {
+  id: string;
+  handle: string;
+  isSelf?: boolean;
+}
+
+export interface ComplexityPulseResult {
+  estimatedTime: string;
+  estimatedSpace: string;
+  meetsTarget: boolean;
+  nudge: string;
+  languageTip: string;
 }
 
 export interface BigOEvaluation {

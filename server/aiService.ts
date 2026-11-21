@@ -7,7 +7,7 @@ import type {
   ProblemStatement,
   ProgrammingLanguage,
   QuickNotesData,
-} from '../src/types/arena';
+} from '../src/types/arena.ts';
 
 // Low-latency routing:
 // - gemini-3.1-flash-lite for fast Quick Notes, Big-O Judging (~1.5-2s), and Mentor coaching
@@ -50,10 +50,10 @@ function setCached<T>(cache: Map<string, CacheEntry<T>>, key: string, value: T):
 }
 
 export function getAiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
   if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
     throw new Error(
-      'GEMINI_API_KEY is not configured. Add a valid key in Settings > Secrets to run Gemini AI evaluation.',
+      'GEMINI_API_KEY is not configured. Add a valid key in Cloud Run Environment Variables or Settings > Secrets to run Gemini AI evaluation.',
     );
   }
   return new GoogleGenAI({

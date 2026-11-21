@@ -28,7 +28,7 @@ import {
 } from './lib/firestoreStore';
 import { TopBar } from './components/TopBar';
 import { LobbyView } from './components/LobbyView';
-import { MatchmakingOverlay } from './components/MatchmakingOverlay';
+import { MatchmakingOverlay, type QueuedPlayerItem } from './components/MatchmakingOverlay';
 import { PreMatchBriefing } from './components/PreMatchBriefing';
 import { BattleArena } from './components/BattleArena';
 import { VictoryScreen } from './components/VictoryScreen';
@@ -65,6 +65,9 @@ export default function App() {
 
   // Matchmaking state
   const [queueElapsedSeconds, setQueueElapsedSeconds] = useState(0);
+  const [queueRoomCode, setQueueRoomCode] = useState<string>('');
+  const [queuedPlayers, setQueuedPlayers] = useState<QueuedPlayerItem[]>([]);
+  const [queueLaunchCountdown, setQueueLaunchCountdown] = useState<number>(0);
 
   // Active Match & Briefing state
   const [roomId, setRoomId] = useState<string>('');
@@ -337,10 +340,42 @@ export default function App() {
           setPlayerId(String(msg.playerId || ''));
         } else if (type === 'queue:status') {
           setActiveSection('arena');
-          setPhase('matchmaking');
-          setQueueElapsedSeconds(0);
+          setPhase((prev) => {
+            if (prev !== 'matchmaking') {
+              setQueueElapsedSeconds(0);
+            }
+            return 'matchmaking';
+          });
+          if (typeof msg.roomCode === 'string' && msg.roomCode) {
+            setQueueRoomCode(msg.roomCode);
+          }
+          if (Array.isArray(msg.playersInQueue)) {
+            setQueuedPlayers(msg.playersInQueue as QueuedPlayerItem[]);
+          }
+          if (typeof msg.launchCountdownSeconds === 'number') {
+            setQueueLaunchCountdown(msg.launchCountdownSeconds);
+          }
+          if (
+            typeof msg.language === 'string' &&
+            ['c', 'cpp', 'java', 'python'].includes(msg.language)
+          ) {
+            setLanguage(msg.language as ProgrammingLanguage);
+          }
+          if (typeof msg.partNumber === 'number' && msg.partNumber >= 1 && msg.partNumber <= 5) {
+            setSelectedPart(msg.partNumber as PartNumber);
+          }
+          if (
+            typeof msg.levelNumber === 'number' &&
+            msg.levelNumber >= 1 &&
+            msg.levelNumber <= 10
+          ) {
+            setSelectedLevel(msg.levelNumber);
+          }
           setLobbyError(null);
         } else if (type === 'queue:cancelled') {
+          setQueueRoomCode('');
+          setQueuedPlayers([]);
+          setQueueLaunchCountdown(0);
           setPhase('lobby');
           setActiveSection('lobby');
         } else if (type === 'match:found') {
@@ -350,8 +385,17 @@ export default function App() {
           const seconds = Number(msg.briefingSeconds) || 10;
           setActiveSection('arena');
           setRoomId(String(msg.roomId || ''));
+          setQueueRoomCode('');
+          setQueuedPlayers([]);
+          setQueueLaunchCountdown(0);
           setProblem(matchedProblem);
           setLanguage(matchedLanguage);
+          if (matchedProblem.partNumber) {
+            setSelectedPart(matchedProblem.partNumber);
+          }
+          if (matchedProblem.levelNumber) {
+            setSelectedLevel(matchedProblem.levelNumber);
+          }
           setPlayers((msg.players as PlayerPresence[]) || []);
           setBriefingSecondsLeft(seconds);
           setBriefingTotalSeconds(seconds);
@@ -478,11 +522,12 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Matchmaking elapsed counter
+  // Matchmaking elapsed & launch countdown timers
   useEffect(() => {
     if (phase !== 'matchmaking') return;
     const id = window.setInterval(() => {
       setQueueElapsedSeconds((s) => s + 1);
+      setQueueLaunchCountdown((c) => (c > 0 ? c - 1 : 0));
     }, 1000);
     return () => clearInterval(id);
   }, [phase]);
@@ -851,8 +896,11 @@ export default function App() {
               selectedPart={selectedPart}
               selectedLevel={selectedLevel}
               selectedProblem={selectedProblem}
-              roomCode={roomCodeInput.trim().toUpperCase() || undefined}
+              roomCode={queueRoomCode || roomCodeInput.trim().toUpperCase() || undefined}
+              playersInQueue={queuedPlayers}
+              launchCountdownSeconds={queueLaunchCountdown}
               elapsedSeconds={queueElapsedSeconds}
+              onStartSolo={() => sendWs({ type: 'queue:start_solo' })}
               onCancel={handleCancelMatchmaking}
             />
           )}

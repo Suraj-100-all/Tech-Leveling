@@ -164,6 +164,46 @@ function broadcastRoomEvent(room: BattleRoom, payload: Record<string, unknown>) 
   }
 }
 
+function findQueueKeyByRoomCode(roomCode: string): string | null {
+  const normalized = roomCode.trim().toUpperCase();
+  if (!normalized) return null;
+  for (const [key, queue] of matchmakingQueues.entries()) {
+    if (queue.some((t) => t.roomCode === normalized)) {
+      return key;
+    }
+  }
+  return null;
+}
+
+function broadcastQueueStatus(queueKey: string, launchCountdownSeconds = 0) {
+  const queue = matchmakingQueues.get(queueKey);
+  if (!queue || queue.length === 0) return;
+  const lead = queue[0];
+  const problem = lead.problemId ? getProblemById(lead.problemId) : undefined;
+  for (const ticket of queue) {
+    const client = clients.get(ticket.clientId);
+    if (!client) continue;
+    sendJson(client.ws, {
+      type: 'queue:status',
+      tier: lead.tier,
+      language: lead.language,
+      problemId: lead.problemId,
+      partNumber: problem?.partNumber,
+      levelNumber: problem?.levelNumber,
+      roomCode: lead.roomCode,
+      playersInQueue: queue.map((t) => ({
+        id: t.clientId,
+        handle: t.handle,
+        isSelf: t.clientId === ticket.clientId,
+      })),
+      maxPlayers: MAX_ROOM_PLAYERS,
+      minPlayers: 2,
+      launchCountdownSeconds,
+      waitMs: MATCHMAKING_DELAY_MS,
+    });
+  }
+}
+
 function removeFromQueues(clientId: string) {
   for (const [key, queue] of matchmakingQueues.entries()) {
     const idx = queue.findIndex((t) => t.clientId === clientId);
@@ -174,6 +214,17 @@ function removeFromQueues(clientId: string) {
       }
       if (queue.length === 0) {
         matchmakingQueues.delete(key);
+      } else {
+        // If someone left and fewer than 2 players remain, pause any pending launch timer and keep waiting
+        if (queue.length < 2) {
+          for (const t of queue) {
+            if (t.timer) {
+              clearTimeout(t.timer);
+              t.timer = undefined;
+            }
+          }
+        }
+        broadcastQueueStatus(key, queue.length >= 2 ? 3 : 0);
       }
     }
   }
@@ -459,10 +510,19 @@ async function startServer() {
 
   // Cloud Run / Production health endpoint
   app.get('/api/health', (_req, res) => {
+    let queuedPlayers = 0;
+    for (const q of matchmakingQueues.values()) {
+      queuedPlayers += q.length;
+    }
     res.json({
       ok: true,
+      aiConfigured: Boolean(
+        (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY') ||
+          process.env.API_KEY,
+      ),
       connectedPlayers: clients.size,
       activeRooms: Array.from(rooms.values()).filter((r) => r.status !== 'finished').length,
+      queuedPlayers,
     });
   });
 
@@ -822,55 +882,82 @@ async function startServer() {
               type: 'queue:status',
               tier: existingRoom.tier,
               language: existingRoom.language,
+              problemId: existingRoom.problem.id,
+              partNumber: existingRoom.problem.partNumber,
+              levelNumber: existingRoom.problem.levelNumber,
               roomCode: requestedRoomCode,
-              waitMs: MATCHMAKING_DELAY_MS,
+              playersInQueue: [
+                ...Array.from(existingRoom.players.values()).map((p) => ({
+                  id: p.id,
+                  handle: p.handle,
+                  isSelf: false,
+                })),
+                { id: client.id, handle: client.handle, isSelf: true },
+              ],
+              maxPlayers: MAX_ROOM_PLAYERS,
+              minPlayers: 2,
+              launchCountdownSeconds: 1,
+              waitMs: 800,
             });
             setTimeout(() => {
               if (ws.readyState === WebSocket.OPEN) {
                 attachClientToRoom(client, existingRoom);
               }
-            }, MATCHMAKING_DELAY_MS);
+            }, 800);
             return;
           }
         }
 
-        // Resolve exact Part x Level problem if requested
-        const reqProblemId = typeof msg.problemId === 'string' ? msg.problemId.trim() : '';
-        const reqPart = Number(msg.partNumber ?? msg.part);
-        const reqLevel = Number(msg.levelNumber ?? msg.level);
-        const selectedProblem =
-          (reqProblemId ? getProblemById(reqProblemId) : undefined) ??
-          (reqPart >= 1 && reqPart <= 5 && reqLevel >= 1 && reqLevel <= 10
-            ? getProgressionProblem(language, reqPart as PartNumber, reqLevel)
-            : pickProblemForTierAndLanguage(tier, language));
+        // Check if requestedRoomCode matches an already-waiting player's queue bucket (even open queue!)
+        const matchedQueueKey = requestedRoomCode
+          ? findQueueKeyByRoomCode(requestedRoomCode)
+          : null;
+
+        // Resolve exact Part x Level problem (or inherit host's exact track when joining via Room Code)
+        let selectedProblem: ProblemStatement;
+        let effectiveLanguage: ProgrammingLanguage = language;
+        let queueKey: string;
+        let assignedRoomCode: string;
+
+        if (matchedQueueKey) {
+          const hostQueue = matchmakingQueues.get(matchedQueueKey)!;
+          const hostTicket = hostQueue[0];
+          effectiveLanguage = hostTicket.language;
+          client.language = effectiveLanguage;
+          selectedProblem =
+            (hostTicket.problemId ? getProblemById(hostTicket.problemId) : undefined) ??
+            pickProblemForTierAndLanguage(hostTicket.tier, effectiveLanguage);
+          queueKey = matchedQueueKey;
+          assignedRoomCode = hostTicket.roomCode || requestedRoomCode;
+        } else {
+          const reqProblemId = typeof msg.problemId === 'string' ? msg.problemId.trim() : '';
+          const reqPart = Number(msg.partNumber ?? msg.part);
+          const reqLevel = Number(msg.levelNumber ?? msg.level);
+          selectedProblem =
+            (reqProblemId ? getProblemById(reqProblemId) : undefined) ??
+            (reqPart >= 1 && reqPart <= 5 && reqLevel >= 1 && reqLevel <= 10
+              ? getProgressionProblem(language, reqPart as PartNumber, reqLevel)
+              : pickProblemForTierAndLanguage(tier, language));
+          queueKey = requestedRoomCode
+            ? `room:${requestedRoomCode}`
+            : `${language}:${selectedProblem.id}`;
+          const existingBucket = matchmakingQueues.get(queueKey);
+          assignedRoomCode =
+            existingBucket?.[0]?.roomCode || requestedRoomCode || generateRoomCode();
+        }
 
         const effectiveTier = selectedProblem.tier;
 
-        // Overlap Quick Notes pre-warming with the 3-second matchmaking handshake
-        prewarmQuickNotes(selectedProblem, language);
-
-        sendJson(ws, {
-          type: 'queue:status',
-          tier: effectiveTier,
-          language,
-          problemId: selectedProblem.id,
-          partNumber: selectedProblem.partNumber,
-          levelNumber: selectedProblem.levelNumber,
-          roomCode: requestedRoomCode || undefined,
-          waitMs: MATCHMAKING_DELAY_MS,
-        });
-
-        const queueKey = requestedRoomCode
-          ? `room:${requestedRoomCode}`
-          : `${language}:${selectedProblem.id}`;
+        // Overlap Gemini Quick Notes pre-warming while waiting for opponent
+        prewarmQuickNotes(selectedProblem, effectiveLanguage);
 
         const ticket: QueueTicket = {
           clientId: client.id,
           queueKey,
           tier: effectiveTier,
-          language,
+          language: effectiveLanguage,
           handle: client.handle,
-          roomCode: requestedRoomCode || undefined,
+          roomCode: assignedRoomCode,
           problemId: selectedProblem.id,
           enqueuedAt: Date.now(),
         };
@@ -882,18 +969,27 @@ async function startServer() {
         if (bucket.length >= MAX_ROOM_PLAYERS) {
           flushQueueForKey(queueKey);
         } else if (bucket.length === 2) {
-          // 2 real players matched on the exact same Room Code or Language + Part + Level:
-          // brief 1200ms window to allow an optional 3rd player before launching live battle
+          // 2 real players matched! Notify both immediately and allow a 3-second window for an optional 3rd player
           for (const t of bucket) {
             if (t.timer) clearTimeout(t.timer);
           }
-          ticket.timer = setTimeout(() => {
-            flushQueueForKey(queueKey);
-          }, 1200);
-        } else {
+          broadcastQueueStatus(queueKey, 3);
           ticket.timer = setTimeout(() => {
             flushQueueForKey(queueKey);
           }, MATCHMAKING_DELAY_MS);
+        } else {
+          // 1 player waiting: strictly wait for a real 2nd player (no premature solo dump!)
+          broadcastQueueStatus(queueKey, 0);
+        }
+        return;
+      }
+
+      if (type === 'queue:start_solo') {
+        for (const [key, queue] of matchmakingQueues.entries()) {
+          if (queue.some((t) => t.clientId === client.id)) {
+            flushQueueForKey(key);
+            return;
+          }
         }
         return;
       }
@@ -1060,7 +1156,17 @@ async function startServer() {
     });
   });
 
-  if (process.env.NODE_ENV !== 'production') {
+  const distPath = path.resolve(process.cwd(), 'dist');
+  const hasBuiltDist = fs.existsSync(path.join(distPath, 'index.html'));
+  const isDevLifecycle =
+    process.env.npm_lifecycle_event === 'dev' ||
+    process.argv.some((arg) => arg.includes('tsx'));
+  const shouldServeStatic =
+    process.env.NODE_ENV === 'production' ||
+    Boolean(process.env.K_SERVICE) ||
+    (hasBuiltDist && !isDevLifecycle);
+
+  if (!shouldServeStatic) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -1068,9 +1174,9 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api/')) return next();
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
