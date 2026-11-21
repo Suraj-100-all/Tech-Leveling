@@ -1,0 +1,6 @@
+{
+  "name": "Tech-Leveling",
+  "description": "Gamified multiplayer competitive coding arena for engineering students with real-time WebSocket rooms, Big-O AI adjudication, and an interactive Socratic AI Mentor.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

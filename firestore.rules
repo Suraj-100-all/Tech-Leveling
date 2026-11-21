@@ -1,0 +1,224 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 1 / Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Global Hardened Primitives ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidLanguage(lang) {
+      return lang is string && lang in ['c', 'cpp', 'java', 'python'];
+    }
+
+    function isValidRank(rank) {
+      return rank is string && rank in ['bronze', 'silver', 'gold', 'platinum', 'grandmaster'];
+    }
+
+    function isValidTier(tier) {
+      return tier is string && tier in ['rookie', 'challenger', 'pro'];
+    }
+
+    function isValidOutcome(outcome) {
+      return outcome is string && outcome in ['victory', 'defeat', 'mentor'];
+    }
+
+    function isValidAvatarUrl(url) {
+      return url is string
+        && url.size() <= 500
+        && (url.size() == 0 || url.matches('^https?://.*$'));
+    }
+
+    // --- Entity Validation Blueprints (Anti-Update-Gap) ---
+    function isValidPlayerProfile(data) {
+      return data.keys().hasAll([
+          'uid',
+          'username',
+          'avatarUrl',
+          'preferredLanguage',
+          'winCount',
+          'lossCount',
+          'totalGamesPlayed',
+          'highestRankAchieved',
+          'coins',
+          'eloRating',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid',
+          'username',
+          'avatarUrl',
+          'preferredLanguage',
+          'winCount',
+          'lossCount',
+          'totalGamesPlayed',
+          'highestRankAchieved',
+          'coins',
+          'eloRating',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.username is string
+        && data.username.size() >= 3
+        && data.username.size() <= 32
+        && data.username.matches('^[A-Za-z0-9_\\-]{3,32}$')
+        && isValidAvatarUrl(data.avatarUrl)
+        && isValidLanguage(data.preferredLanguage)
+        && data.winCount is int && data.winCount >= 0 && data.winCount <= 1000000
+        && data.lossCount is int && data.lossCount >= 0 && data.lossCount <= 1000000
+        && data.totalGamesPlayed is int
+        && data.totalGamesPlayed == data.winCount + data.lossCount
+        && isValidRank(data.highestRankAchieved)
+        && data.coins is int && data.coins >= 0 && data.coins <= 10000000
+        && data.eloRating is int && data.eloRating >= 0 && data.eloRating <= 5000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMatchRecord(data) {
+      return data.keys().hasAll([
+          'uid',
+          'handle',
+          'tier',
+          'problemTitle',
+          'language',
+          'timeComplexity',
+          'spaceComplexity',
+          'outcome',
+          'coinsDelta',
+          'elapsedMs',
+          'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'uid',
+          'handle',
+          'tier',
+          'problemTitle',
+          'language',
+          'timeComplexity',
+          'spaceComplexity',
+          'outcome',
+          'coinsDelta',
+          'elapsedMs',
+          'createdAt'
+        ])
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.handle is string && data.handle.size() >= 1 && data.handle.size() <= 32
+        && isValidTier(data.tier)
+        && data.problemTitle is string && data.problemTitle.size() >= 1 && data.problemTitle.size() <= 160
+        && isValidLanguage(data.language)
+        && data.timeComplexity is string && data.timeComplexity.size() >= 1 && data.timeComplexity.size() <= 48
+        && data.spaceComplexity is string && data.spaceComplexity.size() >= 1 && data.spaceComplexity.size() <= 48
+        && isValidOutcome(data.outcome)
+        && data.coinsDelta is int && data.coinsDelta >= 0 && data.coinsDelta <= 600
+        && data.elapsedMs is int && data.elapsedMs >= 0 && data.elapsedMs <= 86400000
+        && data.createdAt is timestamp;
+    }
+
+    // --- Collection: /profiles/{userId} ---
+    match /profiles/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+
+      allow create: if isVerified()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidPlayerProfile(incoming())
+        && incoming().uid == userId
+        && incoming().winCount == 0
+        && incoming().lossCount == 0
+        && incoming().totalGamesPlayed == 0
+        && incoming().coins == 0
+        && incoming().eloRating == 1200
+        && incoming().highestRankAchieved == 'bronze'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isVerified()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidPlayerProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action 1: Edit Profile Identity
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'username',
+            'avatarUrl',
+            'preferredLanguage',
+            'updatedAt'
+          ])
+          ||
+          // Action 2: Record Single Match Outcome (bounded delta)
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'winCount',
+              'lossCount',
+              'totalGamesPlayed',
+              'highestRankAchieved',
+              'coins',
+              'eloRating',
+              'updatedAt'
+            ])
+            && incoming().totalGamesPlayed == existing().totalGamesPlayed + 1
+            && incoming().coins >= existing().coins
+            && incoming().coins <= existing().coins + 600
+            && incoming().eloRating >= existing().eloRating - 25
+            && incoming().eloRating <= existing().eloRating + 40
+          )
+        );
+
+      allow delete: if false;
+    }
+
+    // --- Collection: /matches/{matchId} ---
+    match /matches/{matchId} {
+      allow get: if isSignedIn()
+        && isValidId(matchId)
+        && existing().uid == request.auth.uid;
+
+      allow list: if isSignedIn()
+        && existing().uid == request.auth.uid;
+
+      allow create: if isVerified()
+        && isValidId(matchId)
+        && isValidMatchRecord(incoming())
+        && incoming().createdAt == request.time
+        && exists(/databases/$(database)/documents/profiles/$(request.auth.uid));
+
+      // Terminal State Locking: Completed match records are immutable
+      allow update: if false;
+      allow delete: if false;
+    }
+  }
+}

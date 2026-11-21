@@ -1,0 +1,171 @@
+{
+  "entities": {
+    "PlayerProfile": {
+      "title": "PlayerProfile",
+      "description": "Authenticated Tech-Leveling player profile tracking competitive language mastery stats, coins, ELO, and dynamic rank badge.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID owning this profile."
+        },
+        "username": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 32,
+          "pattern": "^[A-Za-z0-9_\\-]{3,32}$",
+          "description": "Display handle shown in battle rooms and standings."
+        },
+        "avatarUrl": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Optional HTTP(S) profile avatar URL."
+        },
+        "preferredLanguage": {
+          "type": "string",
+          "enum": ["c", "cpp", "java", "python"],
+          "description": "Primary programming language selected by the user."
+        },
+        "winCount": {
+          "type": "integer",
+          "description": "Total competitive matches won."
+        },
+        "lossCount": {
+          "type": "integer",
+          "description": "Total competitive matches lost."
+        },
+        "totalGamesPlayed": {
+          "type": "integer",
+          "description": "Total completed matches (winCount + lossCount)."
+        },
+        "highestRankAchieved": {
+          "type": "string",
+          "enum": ["bronze", "silver", "gold", "platinum", "grandmaster"],
+          "description": "Highest rank badge unlocked across career matches."
+        },
+        "coins": {
+          "type": "integer",
+          "description": "Total earned arena coins."
+        },
+        "eloRating": {
+          "type": "integer",
+          "description": "Current competitive ELO rating."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the profile was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the latest profile update."
+        }
+      },
+      "required": [
+        "uid",
+        "username",
+        "avatarUrl",
+        "preferredLanguage",
+        "winCount",
+        "lossCount",
+        "totalGamesPlayed",
+        "highestRankAchieved",
+        "coins",
+        "eloRating",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MatchRecord": {
+      "title": "MatchRecord",
+      "description": "Immutable adjudicated Big-O match outcome belonging to an authenticated player.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the player who completed the match."
+        },
+        "handle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "description": "Competitor handle at match completion."
+        },
+        "tier": {
+          "type": "string",
+          "enum": ["rookie", "challenger", "pro"],
+          "description": "Difficulty tier of the match."
+        },
+        "problemTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "Title of the challenge."
+        },
+        "language": {
+          "type": "string",
+          "enum": ["c", "cpp", "java", "python"],
+          "description": "Programming language used for the submission."
+        },
+        "timeComplexity": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 48,
+          "description": "Evaluated O(Time) complexity."
+        },
+        "spaceComplexity": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 48,
+          "description": "Evaluated O(Space) complexity."
+        },
+        "outcome": {
+          "type": "string",
+          "enum": ["victory", "defeat", "mentor"],
+          "description": "Final terminal outcome of the match."
+        },
+        "coinsDelta": {
+          "type": "integer",
+          "description": "Coins awarded for the match."
+        },
+        "elapsedMs": {
+          "type": "integer",
+          "description": "Elapsed match time in milliseconds."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when match was recorded."
+        }
+      },
+      "required": [
+        "uid",
+        "handle",
+        "tier",
+        "problemTitle",
+        "language",
+        "timeComplexity",
+        "spaceComplexity",
+        "outcome",
+        "coinsDelta",
+        "elapsedMs",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/profiles/{userId}": {
+      "schema": { "$ref": "#/entities/PlayerProfile" },
+      "description": "Owner-scoped competitive player profile keyed by Firebase Auth UID."
+    },
+    "/matches/{matchId}": {
+      "schema": { "$ref": "#/entities/MatchRecord" },
+      "description": "Owner-scoped immutable match history records queried by uid."
+    }
+  }
+}
